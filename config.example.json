@@ -1,0 +1,11 @@
+{
+  "listen": ":8080",
+  "cache_path": "/data/cache/metadata.json",
+  "users": [
+    { "username": "reader", "password": "change-me" }
+  ],
+  "libraries": [
+    { "id": "books", "name": "書籍", "path": "/books/books" },
+    { "id": "comics", "name": "コミック", "path": "/books/comics" }
+  ]
+}

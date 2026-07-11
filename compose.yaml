@@ -1,0 +1,15 @@
+services:
+  armarium:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ARMARIUM_CONFIG: /config/config.json
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - ./books:/books:ro
+      - armarium-cache:/data/cache
+
+volumes:
+  armarium-cache:
