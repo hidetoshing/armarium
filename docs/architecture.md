@@ -194,7 +194,21 @@ CBZとZIPの画像数には `.jpg`、`.jpeg`、`.png`、`.gif`、`.webp`、`.avi
 3. バイナリのみを `gcr.io/distroless/static-debian12:nonroot` へコピーします。
 4. 非rootユーザーで `/armarium` を実行します。
 
-Composeではホストの `8080` をコンテナの `8080` へ公開し、`config.json` と `books` を読み取り専用でマウントします。
+Composeではホストの `8080` をコンテナの `8080` へ公開し、`config.json` と `books` を読み取り専用でマウントします。イメージ名は `ARMARIUM_IMAGE`、タグは `ARMARIUM_TAG` で上書きでき、未指定時は `armarium:latest` です。
+
+### 12.1 Makefileによる操作
+
+| ターゲット | 処理 |
+|---|---|
+| `make build` | `armarium:latest` をローカルビルド |
+| `make up` | Composeでビルドし、バックグラウンド起動 |
+| `make start` | `make up` の別名 |
+| `make down` | Composeサービスとネットワークを停止・削除 |
+| `make tag` | ビルド後にDocker Hub向けタグを付与 |
+| `make login` | Docker Hubへ対話的にログイン |
+| `make push` | ビルド、タグ付与、Docker Hubへのpush |
+
+ローカルイメージの既定値は `armarium:latest` です。Docker Hubユーザー名に既定値はなく、タグ付与、ログイン、pushの際に `DOCKERHUB_USER` の指定が必須です。`IMAGE_NAME` と `TAG` はMake変数で変更できます。`make push` はDocker Hubリポジトリの作成やログインを自動化しません。
 
 ## 13. 障害時の動作
 

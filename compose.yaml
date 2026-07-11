@@ -1,6 +1,7 @@
 services:
   armarium:
     build: .
+    image: ${ARMARIUM_IMAGE:-armarium}:${ARMARIUM_TAG:-latest}
     restart: unless-stopped
     ports:
       - "8080:8080"
