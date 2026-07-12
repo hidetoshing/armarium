@@ -25,6 +25,7 @@ func testApp(t *testing.T) (*App, string) {
 	}
 	writeEPUB(t, filepath.Join(dir, "novel.epub"))
 	writeImageZIP(t, filepath.Join(dir, "images.zip"))
+	writeImageZIP(t, filepath.Join(dir, "comic.cbz"))
 	a := New(Config{CachePath: filepath.Join(t.TempDir(), "cache.json"), Users: []User{{Username: "reader", Password: "secret"}}, Libraries: []Library{{ID: "main", Name: "Main", Path: dir}}})
 	return a, dir
 }
@@ -56,13 +57,62 @@ func TestOPDSRootAndFolder(t *testing.T) {
 	}
 	w = request(t, a, "/opds/main", true)
 	body := w.Body.String()
-	if !strings.Contains(body, "Series") || !strings.Contains(body, "EPUB Title") || !strings.Contains(body, "Jane Doe") ||
-		!strings.Contains(body, `href="/download/main/images.zip" type="application/vnd.comicbook+zip"`) {
+	if !strings.Contains(body, "Series") || !strings.Contains(body, "<title>EPUB Title.epub</title>") || !strings.Contains(body, "Jane Doe") ||
+		!strings.Contains(body, "<title>images.cbz</title>") ||
+		!strings.Contains(body, `xmlns:dc="http://purl.org/dc/elements/1.1/"`) ||
+		!strings.Contains(body, `xmlns:dcterms="http://purl.org/dc/terms/"`) ||
+		!strings.Contains(body, "<dc:format>application/vnd.comicbook+zip</dc:format>") ||
+		!strings.Contains(body, "<dcterms:extent>1 page</dcterms:extent>") ||
+		strings.Contains(body, "<content>") ||
+		!strings.Contains(body, `href="/download/main/novel.epub" type="application/epub+zip" title="novel.epub" length="`) ||
+		!strings.Contains(body, `href="/download/main/images.zip" type="application/vnd.comicbook+zip" title="images.cbz" length="`) {
 		t.Fatalf("library: %s", body)
 	}
 	w = request(t, a, "/opds/main?path=Series", true)
 	if !strings.Contains(w.Body.String(), "book.pdf") || !strings.Contains(w.Body.String(), "/download/main/Series/book.pdf") {
 		t.Fatalf("folder: %s", w.Body.String())
+	}
+}
+
+func TestPublicationExtentUsesImagePageCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata Metadata
+		want     string
+	}{
+		{name: "EPUBには出力しない", metadata: Metadata{MediaType: "application/epub+zip", Size: 123}, want: ""},
+		{name: "0ページは出力しない", metadata: Metadata{MediaType: "application/vnd.comicbook+zip", ImageCount: 0}, want: ""},
+		{name: "1ページ", metadata: Metadata{MediaType: "application/vnd.comicbook+zip", ImageCount: 1}, want: "1 page"},
+		{name: "複数ページ", metadata: Metadata{MediaType: "application/vnd.comicbook+zip", ImageCount: 12}, want: "12 pages"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := publicationExtent(tt.metadata); got != tt.want {
+				t.Fatalf("publication extent: got=%q want=%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPublicationTitleUsesDeliveredExtension(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+		path  string
+		want  string
+	}{
+		{name: "EPUB", title: "作品名", path: "book.epub", want: "作品名.epub"},
+		{name: "PDF", title: "資料", path: "book.PDF", want: "資料.pdf"},
+		{name: "CBZ", title: "漫画", path: "book.cbz", want: "漫画.cbz"},
+		{name: "ZIPはCBZ", title: "画像集", path: "book.zip", want: "画像集.cbz"},
+		{name: "既存拡張子", title: "作品名.EPUB", path: "book.epub", want: "作品名.EPUB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := publicationTitle(tt.title, tt.path); got != tt.want {
+				t.Fatalf("publication title: got=%q want=%q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -72,12 +122,29 @@ func TestDownloadAndTraversal(t *testing.T) {
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/pdf" {
 		t.Fatalf("download: %d %v", w.Code, w.Header())
 	}
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="download.pdf"; filename*=UTF-8''book.pdf` {
+		t.Fatalf("pdf content disposition: %q", got)
+	}
+	w = request(t, a, "/download/main/novel.epub", true)
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/epub+zip" {
+		t.Fatalf("epub download: %d %v", w.Code, w.Header())
+	}
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="download.epub"; filename*=UTF-8''novel.epub` {
+		t.Fatalf("epub content disposition: %q", got)
+	}
 	w = request(t, a, "/download/main/images.zip", true)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/vnd.comicbook+zip" {
 		t.Fatalf("image zip download: %d %v", w.Code, w.Header())
 	}
-	if got := w.Header().Get("Content-Disposition"); got != "attachment; filename*=UTF-8''images.cbz" {
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="download.cbz"; filename*=UTF-8''images.cbz` {
 		t.Fatalf("image zip content disposition: %q", got)
+	}
+	w = request(t, a, "/download/main/comic.cbz", true)
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/vnd.comicbook+zip" {
+		t.Fatalf("cbz download: %d %v", w.Code, w.Header())
+	}
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="download.cbz"; filename*=UTF-8''comic.cbz` {
+		t.Fatalf("cbz content disposition: %q", got)
 	}
 	w = request(t, a, "/opds/main?path=..", true)
 	if w.Code != 400 {
@@ -93,6 +160,14 @@ func TestDownloadAndTraversal(t *testing.T) {
 	w = request(t, a, "/download/main/outside/secret.pdf", true)
 	if w.Code != 400 {
 		t.Fatalf("symlink escape status=%d", w.Code)
+	}
+}
+
+func TestContentDispositionKeepsUTF8Filename(t *testing.T) {
+	got := contentDisposition(filepath.Join(t.TempDir(), "日本 語.epub"))
+	want := `attachment; filename="download.epub"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%20%E8%AA%9E.epub`
+	if got != want {
+		t.Fatalf("content disposition: got=%q want=%q", got, want)
 	}
 }
 

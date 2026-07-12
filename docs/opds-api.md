@@ -93,7 +93,9 @@ curl --user reader:change-me http://localhost:8080/opds
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/elements/1.1/"
+      xmlns:dcterms="http://purl.org/dc/terms/">
   <id>urn:armarium:root</id>
   <title>Armarium</title>
   <updated>2026-07-12T01:23:45Z</updated>
@@ -167,19 +169,25 @@ curl --user reader:change-me \
 ```xml
 <entry>
   <id>urn:armarium:book:books:小説/シリーズA/example.epub</id>
-  <title>Example Book</title>
+  <title>Example Book.epub</title>
   <updated>2026-07-12T01:00:00Z</updated>
   <author>
     <name>Example Author</name>
   </author>
-  <content>123456 bytes</content>
+  <dc:format>application/epub+zip</dc:format>
   <link rel="http://opds-spec.org/acquisition"
         href="/download/books/%E5%B0%8F%E8%AA%AC/%E3%82%B7%E3%83%AA%E3%83%BC%E3%82%BAA/example.epub"
-        type="application/epub+zip"></link>
+        type="application/epub+zip"
+        title="example.epub"
+        length="123456"></link>
 </entry>
 ```
 
-`author` はEPUBから著者を取得できた場合だけ出力します。`content` は10進数のファイルサイズと `bytes` からなる文字列です。
+書籍の `title` には配信形式の拡張子を付加します。ZIPはCBZとして配信するため `.cbz` を使用し、タイトルが同じ拡張子で終わっている場合は重複して付加しません。`author` はEPUBから著者を取得できた場合だけ出力します。
+
+`dc:format` には配信時のMIMEタイプを出力します。取得リンクの `title` は配信ファイル名、`length` は10進数の正確なバイト数です。
+
+CBZとZIPでは、対応画像ファイルの件数をページ数相当として `dcterms:extent` に `42 pages` の形式で出力します。1件の場合は `1 page` とし、0件の場合は要素を省略します。`content` と `summary` は概要や要約を取得できるようになるまで出力しません。
 
 ### 6.6 並び順
 
@@ -218,11 +226,13 @@ curl --user reader:change-me \
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/epub+zip
-Content-Disposition: attachment; filename*=UTF-8''example.epub
+Content-Disposition: attachment; filename="download.epub"; filename*=UTF-8''example.epub
 Accept-Ranges: bytes
 ```
 
 ファイル配信にはGo標準の `http.ServeFile` を使用するため、更新日時、Rangeリクエスト、条件付きリクエストは同関数の挙動に従います。
+
+`Content-Disposition` には、従来形式しか解釈しないクライアント向けのASCIIファイル名 `filename="download.{拡張子}"` と、元のファイル名をUTF-8で表す `filename*` を併記します。
 
 ### 7.4 MIMEタイプ
 
@@ -235,7 +245,7 @@ Accept-Ranges: bytes
 
 拡張子判定は大文字・小文字を区別しません。
 
-`.zip` は画像書庫としてCBZと同じMIMEタイプで配信します。ダウンロード時の `Content-Disposition` では拡張子を `.cbz` に置き換えますが、ライブラリ内の元ファイルは変更しません。書庫内容の検証や別形式からの変換は行いません。
+`.zip` は画像書庫としてCBZと同じMIMEタイプで配信します。ダウンロード時の `Content-Disposition` では `filename` と `filename*` の拡張子を `.cbz` に置き換えますが、ライブラリ内の元ファイルは変更しません。書庫内容の検証や別形式からの変換は行いません。
 
 ### 7.5 エラー
 
@@ -255,7 +265,11 @@ Accept-Ranges: bytes
 | 書籍ID | `entry/id` | `urn:armarium:book:{library}:{relative-path}` |
 | フォルダリンク | `entry/link@rel` | `subsection` |
 | 書籍取得リンク | `entry/link@rel` | `http://opds-spec.org/acquisition` |
-| 書籍タイトル | `entry/title` | EPUBタイトル、取得不能時は拡張子を除いたファイル名 |
+| 書籍取得形式 | `entry/link@type`、`entry/dc:format` | 配信時のMIMEタイプ |
+| 書籍取得名 | `entry/link@title` | 配信時のファイル名。ZIPは `.cbz` |
+| 書籍サイズ | `entry/link@length` | 10進数のバイト数 |
+| 画像ページ数 | `entry/dcterms:extent` | 対応画像ファイル数。例: `42 pages` |
+| 書籍タイトル | `entry/title` | EPUBタイトルまたはファイル名に配信拡張子を付加 |
 | 書籍著者 | `entry/author/name` | EPUB creator。空の場合は要素自体を省略 |
 | 書籍更新日時 | `entry/updated` | ファイル更新日時 |
 | フォルダ更新日時 | `entry/updated` | ディレクトリ更新日時 |

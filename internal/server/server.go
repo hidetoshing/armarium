@@ -77,18 +77,22 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 }
 
 type feed struct {
-	XMLName xml.Name `xml:"feed"`
-	Xmlns   string   `xml:"xmlns,attr"`
-	ID      string   `xml:"id"`
-	Title   string   `xml:"title"`
-	Updated string   `xml:"updated"`
-	Entries []entry  `xml:"entry"`
+	XMLName      xml.Name `xml:"feed"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	XmlnsDC      string   `xml:"xmlns:dc,attr"`
+	XmlnsDCTerms string   `xml:"xmlns:dcterms,attr"`
+	ID           string   `xml:"id"`
+	Title        string   `xml:"title"`
+	Updated      string   `xml:"updated"`
+	Entries      []entry  `xml:"entry"`
 }
 type entry struct {
 	ID      string  `xml:"id"`
 	Title   string  `xml:"title"`
 	Updated string  `xml:"updated"`
 	Author  *author `xml:"author,omitempty"`
+	Format  string  `xml:"dc:format,omitempty"`
+	Extent  string  `xml:"dcterms:extent,omitempty"`
 	Content string  `xml:"content,omitempty"`
 	Links   []link  `xml:"link"`
 }
@@ -96,12 +100,19 @@ type author struct {
 	Name string `xml:"name"`
 }
 type link struct {
-	Rel  string `xml:"rel,attr"`
-	Href string `xml:"href,attr"`
-	Type string `xml:"type,attr,omitempty"`
+	Rel    string `xml:"rel,attr"`
+	Href   string `xml:"href,attr"`
+	Type   string `xml:"type,attr,omitempty"`
+	Title  string `xml:"title,attr,omitempty"`
+	Length int64  `xml:"length,attr,omitempty"`
 }
 
-const opdsType = "application/atom+xml;profile=opds-catalog;kind=navigation"
+const (
+	opdsType         = "application/atom+xml;profile=opds-catalog;kind=navigation"
+	atomNamespace    = "http://www.w3.org/2005/Atom"
+	dcNamespace      = "http://purl.org/dc/elements/1.1/"
+	dctermsNamespace = "http://purl.org/dc/terms/"
+)
 
 func writeFeed(w http.ResponseWriter, f feed) {
 	w.Header().Set("Content-Type", opdsType+"; charset=utf-8")
@@ -109,8 +120,11 @@ func writeFeed(w http.ResponseWriter, f feed) {
 	_ = xml.NewEncoder(w).Encode(f)
 }
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
+func newFeed(id, title, updated string) feed {
+	return feed{Xmlns: atomNamespace, XmlnsDC: dcNamespace, XmlnsDCTerms: dctermsNamespace, ID: id, Title: title, Updated: updated}
+}
 func (a *App) opdsRoot(w http.ResponseWriter, r *http.Request) {
-	f := feed{Xmlns: "http://www.w3.org/2005/Atom", ID: "urn:armarium:root", Title: "Armarium", Updated: now()}
+	f := newFeed("urn:armarium:root", "Armarium", now())
 	for _, l := range a.config.Libraries {
 		f.Entries = append(f.Entries, entry{ID: "urn:armarium:library:" + l.ID, Title: l.Name, Updated: now(), Links: []link{{Rel: "subsection", Href: "/opds/" + url.PathEscape(l.ID), Type: opdsType}}})
 	}
@@ -181,12 +195,12 @@ func (a *App) opdsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.cache.refreshDirectory(dir, dirInfo, items)
-	f := feed{Xmlns: "http://www.w3.org/2005/Atom", ID: "urn:armarium:" + l.ID + ":" + rel, Title: l.Name + func() string {
+	f := newFeed("urn:armarium:"+l.ID+":"+rel, l.Name+func() string {
 		if rel != "" {
 			return " / " + rel
 		}
 		return ""
-	}(), Updated: now()}
+	}(), now())
 	sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Name()) < strings.ToLower(items[j].Name()) })
 	for _, item := range items {
 		child := filepath.Join(rel, item.Name())
@@ -204,7 +218,20 @@ func (a *App) opdsLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 		m := a.cache.get(filepath.Join(dir, item.Name()), info)
 		dl := "/download/" + url.PathEscape(l.ID) + "/" + escapedPath(child)
-		e2 := entry{ID: "urn:armarium:book:" + l.ID + ":" + filepath.ToSlash(child), Title: m.Title, Updated: m.Modified.UTC().Format(time.RFC3339), Content: fmt.Sprintf("%d bytes", m.Size), Links: []link{{Rel: "http://opds-spec.org/acquisition", Href: dl, Type: m.MediaType}}}
+		e2 := entry{
+			ID:      "urn:armarium:book:" + l.ID + ":" + filepath.ToSlash(child),
+			Title:   publicationTitle(m.Title, child),
+			Updated: m.Modified.UTC().Format(time.RFC3339),
+			Format:  m.MediaType,
+			Extent:  publicationExtent(m),
+			Links: []link{{
+				Rel:    "http://opds-spec.org/acquisition",
+				Href:   dl,
+				Type:   m.MediaType,
+				Title:  downloadName(child),
+				Length: m.Size,
+			}},
+		}
 		if m.Author != "" {
 			e2.Author = &author{Name: m.Author}
 		}
@@ -230,8 +257,33 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mediaType(strings.ToLower(filepath.Ext(p))))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(downloadName(p))))
+	w.Header().Set("Content-Disposition", contentDisposition(p))
 	http.ServeFile(w, r, p)
+}
+
+func publicationExtent(m Metadata) string {
+	if m.MediaType != "application/vnd.comicbook+zip" || m.ImageCount <= 0 {
+		return ""
+	}
+	unit := "pages"
+	if m.ImageCount == 1 {
+		unit = "page"
+	}
+	return fmt.Sprintf("%d %s", m.ImageCount, unit)
+}
+
+func publicationTitle(title, path string) string {
+	ext := strings.ToLower(filepath.Ext(downloadName(path)))
+	if ext == "" || strings.EqualFold(filepath.Ext(strings.TrimSpace(title)), ext) {
+		return title
+	}
+	return title + ext
+}
+
+func contentDisposition(path string) string {
+	name := downloadName(path)
+	fallback := "download" + strings.ToLower(filepath.Ext(name))
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, fallback, url.PathEscape(name))
 }
 
 func downloadName(path string) string {
