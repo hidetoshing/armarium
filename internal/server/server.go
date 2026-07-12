@@ -175,6 +175,12 @@ func (a *App) opdsLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	a.cache.refreshDirectory(dir, dirInfo, items)
 	f := feed{Xmlns: "http://www.w3.org/2005/Atom", ID: "urn:armarium:" + l.ID + ":" + rel, Title: l.Name + func() string {
 		if rel != "" {
 			return " / " + rel
@@ -193,7 +199,7 @@ func (a *App) opdsLibrary(w http.ResponseWriter, r *http.Request) {
 			f.Entries = append(f.Entries, entry{ID: "urn:armarium:dir:" + l.ID + ":" + filepath.ToSlash(child), Title: item.Name(), Updated: info.ModTime().UTC().Format(time.RFC3339), Links: []link{{Rel: "subsection", Href: href, Type: opdsType}}})
 			continue
 		}
-		if !supported(item.Name()) {
+		if !item.Type().IsRegular() || !supported(item.Name()) {
 			continue
 		}
 		m := a.cache.get(filepath.Join(dir, item.Name()), info)

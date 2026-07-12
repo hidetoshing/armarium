@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testApp(t *testing.T) (*App, string) {
@@ -89,6 +91,99 @@ func TestMetadataCachePersists(t *testing.T) {
 	a, _ := testApp(t)
 	_ = request(t, a, "/opds/main", true)
 	if _, err := os.Stat(a.config.CachePath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectoryChangeRefreshesDirectChildren(t *testing.T) {
+	a, root := testApp(t)
+	series := filepath.Join(root, "Series")
+	_ = request(t, a, "/opds/main?path=Series", true)
+
+	oldPath := filepath.Join(series, "book.pdf")
+	if err := os.Remove(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	newPath := filepath.Join(series, "new.pdf")
+	if err := os.WriteFile(newPath, []byte("%PDF-1.7"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forceDirectoryTimestamp(t, series)
+
+	w := request(t, a, "/opds/main?path=Series", true)
+	if strings.Contains(w.Body.String(), "book.pdf") || !strings.Contains(w.Body.String(), "new.pdf") {
+		t.Fatalf("folder: %s", w.Body.String())
+	}
+	if _, ok := a.cache.entries[oldPath]; ok {
+		t.Fatal("削除済みファイルのキャッシュが残っています")
+	}
+	if _, ok := a.cache.entries[newPath]; !ok {
+		t.Fatal("新規ファイルがキャッシュされていません")
+	}
+}
+
+func TestDirectoryChangeKeepsDescendantCache(t *testing.T) {
+	a, root := testApp(t)
+	series := filepath.Join(root, "Series")
+	subdir := filepath.Join(series, "Sub")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nestedPath := filepath.Join(subdir, "nested.pdf")
+	if err := os.WriteFile(nestedPath, []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = request(t, a, "/opds/main?path=Series%2FSub", true)
+	if _, ok := a.cache.entries[nestedPath]; !ok {
+		t.Fatal("子ディレクトリの書籍がキャッシュされていません")
+	}
+
+	if err := os.WriteFile(filepath.Join(series, "added.pdf"), []byte("%PDF-1.7"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forceDirectoryTimestamp(t, series)
+	_ = request(t, a, "/opds/main?path=Series", true)
+	if _, ok := a.cache.entries[nestedPath]; !ok {
+		t.Fatal("直下の差分更新で子ディレクトリのキャッシュが削除されました")
+	}
+}
+
+func TestMetadataCacheLoadsVersion1AndMigrates(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	bookPath := filepath.Join(dir, "book.pdf")
+	if err := os.WriteFile(bookPath, []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := map[string]cacheEntry{bookPath: {Size: info.Size(), ModUnix: info.ModTime().UnixNano(), Metadata: extractMetadata(bookPath, info)}}
+	b, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(Config{CachePath: cachePath, Users: []User{{Username: "reader", Password: "secret"}}, Libraries: []Library{{ID: "main", Name: "Main", Path: dir}}})
+	_ = request(t, a, "/opds/main", true)
+	b, err = os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored cacheFile
+	if err := json.Unmarshal(b, &stored); err != nil || stored.Version != cacheVersion || stored.Entries[bookPath].Metadata.Title != "book" {
+		t.Fatalf("移行後のキャッシュが不正です: err=%v cache=%+v", err, stored)
+	}
+}
+
+func forceDirectoryTimestamp(t *testing.T, path string) {
+	t.Helper()
+	stamp := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 }
