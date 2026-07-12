@@ -24,6 +24,7 @@ func testApp(t *testing.T) (*App, string) {
 		t.Fatal(err)
 	}
 	writeEPUB(t, filepath.Join(dir, "novel.epub"))
+	writeImageZIP(t, filepath.Join(dir, "images.zip"))
 	a := New(Config{CachePath: filepath.Join(t.TempDir(), "cache.json"), Users: []User{{Username: "reader", Password: "secret"}}, Libraries: []Library{{ID: "main", Name: "Main", Path: dir}}})
 	return a, dir
 }
@@ -55,7 +56,8 @@ func TestOPDSRootAndFolder(t *testing.T) {
 	}
 	w = request(t, a, "/opds/main", true)
 	body := w.Body.String()
-	if !strings.Contains(body, "Series") || !strings.Contains(body, "EPUB Title") || !strings.Contains(body, "Jane Doe") {
+	if !strings.Contains(body, "Series") || !strings.Contains(body, "EPUB Title") || !strings.Contains(body, "Jane Doe") ||
+		!strings.Contains(body, `href="/download/main/images.zip" type="application/vnd.comicbook+zip"`) {
 		t.Fatalf("library: %s", body)
 	}
 	w = request(t, a, "/opds/main?path=Series", true)
@@ -69,6 +71,13 @@ func TestDownloadAndTraversal(t *testing.T) {
 	w := request(t, a, "/download/main/Series/book.pdf", true)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/pdf" {
 		t.Fatalf("download: %d %v", w.Code, w.Header())
+	}
+	w = request(t, a, "/download/main/images.zip", true)
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/vnd.comicbook+zip" {
+		t.Fatalf("image zip download: %d %v", w.Code, w.Header())
+	}
+	if got := w.Header().Get("Content-Disposition"); got != "attachment; filename*=UTF-8''images.cbz" {
+		t.Fatalf("image zip content disposition: %q", got)
 	}
 	w = request(t, a, "/opds/main?path=..", true)
 	if w.Code != 400 {
@@ -180,6 +189,41 @@ func TestMetadataCacheLoadsVersion1AndMigrates(t *testing.T) {
 	}
 }
 
+func TestOldMetadataCacheDoesNotKeepZIPMediaType(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	bookPath := filepath.Join(dir, "images.zip")
+	writeImageZIP(t, bookPath)
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldMetadata := extractMetadata(bookPath, info)
+	oldMetadata.MediaType = "application/zip"
+	old := cacheFile{
+		Version:     cacheVersion - 1,
+		Directories: map[string]int64{dir: dirInfo.ModTime().UnixNano()},
+		Entries:     map[string]cacheEntry{bookPath: {Size: info.Size(), ModUnix: info.ModTime().UnixNano(), Metadata: oldMetadata}},
+	}
+	b, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(Config{CachePath: cachePath, Users: []User{{Username: "reader", Password: "secret"}}, Libraries: []Library{{ID: "main", Name: "Main", Path: dir}}})
+	w := request(t, a, "/opds/main", true)
+	if !strings.Contains(w.Body.String(), `href="/download/main/images.zip" type="application/vnd.comicbook+zip"`) {
+		t.Fatalf("古いキャッシュのMIMEタイプが残っています: %s", w.Body.String())
+	}
+}
+
 func forceDirectoryTimestamp(t *testing.T, path string) {
 	t.Helper()
 	stamp := time.Now().Add(2 * time.Second)
@@ -201,6 +245,25 @@ func writeEPUB(t *testing.T, path string) {
 		if _, err = io.WriteString(w, body); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeImageZIP(t *testing.T, path string) {
+	t.Helper()
+	var b bytes.Buffer
+	z := zip.NewWriter(&b)
+	w, err := z.Create("001.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("image")); err != nil {
+		t.Fatal(err)
 	}
 	if err := z.Close(); err != nil {
 		t.Fatal(err)

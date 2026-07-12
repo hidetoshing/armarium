@@ -40,23 +40,26 @@ type cacheFile struct {
 	Entries     map[string]cacheEntry `json:"entries"`
 }
 
-const cacheVersion = 2
+const cacheVersion = 3
 
 func newMetadataCache(path string) *metadataCache {
 	c := &metadataCache{path: path, directories: map[string]int64{}, entries: map[string]cacheEntry{}}
 	b, err := os.ReadFile(path)
 	if err == nil {
 		var stored cacheFile
-		if json.Unmarshal(b, &stored) == nil && stored.Version == cacheVersion {
-			if stored.Directories != nil {
-				c.directories = stored.Directories
+		if json.Unmarshal(b, &stored) == nil {
+			switch stored.Version {
+			case cacheVersion:
+				if stored.Directories != nil {
+					c.directories = stored.Directories
+				}
+				if stored.Entries != nil {
+					c.entries = stored.Entries
+				}
+			case 0:
+				// version 1では書籍エントリーがJSONのルートに格納されていた。
+				_ = json.Unmarshal(b, &c.entries)
 			}
-			if stored.Entries != nil {
-				c.entries = stored.Entries
-			}
-		} else {
-			// version 1では書籍エントリーがJSONのルートに格納されていた。
-			_ = json.Unmarshal(b, &c.entries)
 		}
 	}
 	return c
@@ -142,7 +145,7 @@ func mediaType(ext string) string {
 		return "application/pdf"
 	case ".epub":
 		return "application/epub+zip"
-	case ".cbz":
+	case ".cbz", ".zip":
 		return "application/vnd.comicbook+zip"
 	default:
 		return "application/zip"

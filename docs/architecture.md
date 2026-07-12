@@ -143,11 +143,13 @@ ArmariumはOPDSリクエストごとに対象ディレクトリを `os.ReadDir` 
 | `.pdf` | `application/pdf` | ファイル名 | 取得しない | 取得しない | 取得する |
 | `.epub` | `application/epub+zip` | OPFのtitle、失敗時はファイル名 | OPFのcreator | 取得しない | 取得する |
 | `.cbz` | `application/vnd.comicbook+zip` | ファイル名 | 取得しない | 取得する | 取得する |
-| `.zip` | `application/zip` | ファイル名 | 取得しない | 取得する | 取得する |
+| `.zip` | `application/vnd.comicbook+zip` | ファイル名 | 取得しない | 取得する | 取得する |
 
 EPUBでは `META-INF/container.xml` から最初のOPFパスを取得し、OPF内の最初にデコードされた `title` と `creator` を使用します。コンテナXMLは最大1 MiB、OPFは最大4 MiBまで読み取ります。
 
 CBZとZIPの画像数には `.jpg`、`.jpeg`、`.png`、`.gif`、`.webp`、`.avif` を数えます。現行のOPDSレスポンスには画像数を出力していませんが、キャッシュ内には保持します。
+
+ZIPはすべて画像書庫とみなし、CBZと同じMIMEタイプで配信します。ダウンロード時は拡張子を `.cbz` に置き換えたファイル名を `Content-Disposition` で提示しますが、ライブラリ内の元ファイルは変更しません。Armariumは書庫形式の変換を責務とせず、書庫内容が画像だけで構成されているかも検証しません。
 
 ## 10. キャッシュ設計
 
@@ -276,7 +278,7 @@ make push DOCKERHUB_USER=example TAG=v1.0.0
 - ページング、検索、全文検索、表紙画像、カテゴリ、読書進捗管理はありません。
 - PDFの文書プロパティは解析しません。
 - EPUBの複数著者や高度な名前空間表現を正規化しません。
-- ZIP書庫が画像のみで構成されているかは検証しません。
+- ZIP書庫はすべて画像書庫として扱い、画像のみで構成されているかは検証しません。
 - キャッシュの期限切れやバックグラウンドでの全ライブラリ走査はありません。
 - HTTPサーバーの読み書きタイムアウトやGraceful Shutdownは設定していません。
 - アプリケーション単体ではTLSを終端しません。
