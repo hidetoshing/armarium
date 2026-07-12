@@ -28,18 +28,75 @@ type cacheEntry struct {
 }
 
 type metadataCache struct {
-	path    string
-	mu      sync.Mutex
-	entries map[string]cacheEntry
+	path        string
+	mu          sync.Mutex
+	directories map[string]int64
+	entries     map[string]cacheEntry
 }
 
+type cacheFile struct {
+	Version     int                   `json:"version"`
+	Directories map[string]int64      `json:"directories"`
+	Entries     map[string]cacheEntry `json:"entries"`
+}
+
+const cacheVersion = 2
+
 func newMetadataCache(path string) *metadataCache {
-	c := &metadataCache{path: path, entries: map[string]cacheEntry{}}
+	c := &metadataCache{path: path, directories: map[string]int64{}, entries: map[string]cacheEntry{}}
 	b, err := os.ReadFile(path)
 	if err == nil {
-		_ = json.Unmarshal(b, &c.entries)
+		var stored cacheFile
+		if json.Unmarshal(b, &stored) == nil && stored.Version == cacheVersion {
+			if stored.Directories != nil {
+				c.directories = stored.Directories
+			}
+			if stored.Entries != nil {
+				c.entries = stored.Entries
+			}
+		} else {
+			// version 1では書籍エントリーがJSONのルートに格納されていた。
+			_ = json.Unmarshal(b, &c.entries)
+		}
 	}
 	return c
+}
+
+func (c *metadataCache) refreshDirectory(dir string, info os.FileInfo, items []os.DirEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	modUnix := info.ModTime().UnixNano()
+	if c.directories[dir] == modUnix {
+		return
+	}
+
+	present := make(map[string]bool)
+	for _, item := range items {
+		if item.IsDir() || !item.Type().IsRegular() || !supported(item.Name()) {
+			continue
+		}
+		itemInfo, err := item.Info()
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, item.Name())
+		present[path] = true
+		entry, ok := c.entries[path]
+		if ok && entry.Size == itemInfo.Size() && entry.ModUnix == itemInfo.ModTime().UnixNano() {
+			continue
+		}
+		metadata := extractMetadata(path, itemInfo)
+		c.entries[path] = cacheEntry{Size: itemInfo.Size(), ModUnix: itemInfo.ModTime().UnixNano(), Metadata: metadata}
+	}
+
+	for path := range c.entries {
+		if filepath.Dir(path) == dir && !present[path] {
+			delete(c.entries, path)
+		}
+	}
+	c.directories[dir] = modUnix
+	c.persist()
 }
 
 func (c *metadataCache) get(path string, info os.FileInfo) Metadata {
@@ -55,7 +112,7 @@ func (c *metadataCache) get(path string, info os.FileInfo) Metadata {
 }
 
 func (c *metadataCache) persist() {
-	b, err := json.Marshal(c.entries)
+	b, err := json.Marshal(cacheFile{Version: cacheVersion, Directories: c.directories, Entries: c.entries})
 	if err != nil {
 		return
 	}
