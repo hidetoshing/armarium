@@ -2,7 +2,7 @@
   "listen": ":8080",
   "cache_path": "/data/cache/metadata.json",
   "users": [
-    { "username": "reader", "password": "change-me" }
+    { "username": "reader", "password_sha256": "e2186dbdb1bb4193608605e84f33208765b5693b55edd4f730a719a100eeea6f" }
   ],
   "libraries": [
     { "id": "books", "name": "書籍", "path": "/books/books" },

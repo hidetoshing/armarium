@@ -74,7 +74,7 @@ Docker Composeの既定構成では、ホストの `./books` をコンテナの 
   "users": [
     {
       "username": "reader",
-      "password": "change-me"
+      "password_sha256": "e2186dbdb1bb4193608605e84f33208765b5693b55edd4f730a719a100eeea6f"
     }
   ],
   "libraries": [
@@ -101,10 +101,10 @@ Docker Composeの既定構成では、ホストの `./books` をコンテナの 
 | 項目 | 必須 | 説明 |
 |---|---:|---|
 | `username` | はい | Basic認証のユーザー名 |
-| `password` | 条件付き | 平文パスワード |
-| `password_sha256` | 条件付き | パスワードをSHA-256でハッシュした小文字16進文字列 |
+| `password_sha256` | 条件付き | パスワードをSHA-256でハッシュした小文字16進文字列。標準の設定方法 |
+| `password` | 条件付き | 平文パスワード。互換性のため使用可能だが非推奨 |
 
-`password` または `password_sha256` の少なくとも一方が必要です。両方を指定した場合は `password_sha256` が優先されます。
+`password_sha256` または `password` の少なくとも一方が必要です。設定ファイルに平文パスワードを残さない `password_sha256` を標準とします。両方を指定した場合は `password_sha256` が優先されます。上記の例はパスワード `change-me` のSHA-256ハッシュであり、運用時は必ず変更する必要があります。
 
 ### 6.3 ライブラリ
 
@@ -209,6 +209,44 @@ Composeではホストの `8080` をコンテナの `8080` へ公開し、`confi
 | `make push` | ビルド、タグ付与、Docker Hubへのpush |
 
 ローカルイメージの既定値は `armarium:latest` です。Docker Hubユーザー名に既定値はなく、タグ付与、ログイン、pushの際に `DOCKERHUB_USER` の指定が必須です。`IMAGE_NAME` と `TAG` はMake変数で変更できます。`make push` はDocker Hubリポジトリの作成やログインを自動化しません。
+
+### 12.2 ビルドと起動
+
+ローカルイメージをビルドします。Dockerfileのビルドステージでテストも実行されます。
+
+```sh
+make build
+```
+
+Composeでビルドし、バックグラウンド起動します。
+
+```sh
+make up
+```
+
+イメージ名とタグはMake変数で変更できます。
+
+```sh
+make build IMAGE_NAME=armarium TAG=v1.0.0
+make up IMAGE_NAME=armarium TAG=v1.0.0
+```
+
+### 12.3 Docker Hubへの公開
+
+Docker Hubへログインし、公開用タグを付けてpushします。
+
+```sh
+make login DOCKERHUB_USER=example
+make push DOCKERHUB_USER=example TAG=v1.0.0
+```
+
+公開先の完全なイメージ名は、次の形式です。
+
+```text
+<DOCKERHUB_USER>/<IMAGE_NAME>:<TAG>
+```
+
+`make push` はローカルビルド、公開用タグの付与、`docker push` を順に実行します。Docker Hubのリポジトリは事前に作成してください。
 
 ## 13. 障害時の動作
 
