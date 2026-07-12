@@ -231,9 +231,11 @@ Accept-Ranges: bytes
 | `.pdf` | `application/pdf` |
 | `.epub` | `application/epub+zip` |
 | `.cbz` | `application/vnd.comicbook+zip` |
-| `.zip` | `application/zip` |
+| `.zip` | `application/vnd.comicbook+zip` |
 
 拡張子判定は大文字・小文字を区別しません。
+
+`.zip` は画像書庫としてCBZと同じMIMEタイプで配信します。ダウンロード時の `Content-Disposition` では拡張子を `.cbz` に置き換えますが、ライブラリ内の元ファイルは変更しません。書庫内容の検証や別形式からの変換は行いません。
 
 ### 7.5 エラー
 

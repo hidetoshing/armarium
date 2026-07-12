@@ -230,6 +230,14 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mediaType(strings.ToLower(filepath.Ext(p))))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(filepath.Base(p))))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(downloadName(p))))
 	http.ServeFile(w, r, p)
+}
+
+func downloadName(path string) string {
+	name := filepath.Base(path)
+	if strings.EqualFold(filepath.Ext(name), ".zip") {
+		return strings.TrimSuffix(name, filepath.Ext(name)) + ".cbz"
+	}
+	return name
 }
